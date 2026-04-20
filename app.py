@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="Albion Econ", layout="wide")
+st.set_page_config(page_title="Bananita Market", layout="wide")
 # --- FUNCIÓN DE CONEXIÓN A LA API DE ALBION PARA REFINACIÓN ---
 @st.cache_data(ttl=300) # Guarda los datos 5 minutos
 def consultar_api_albion(items_list, locations_list):
@@ -16,6 +16,34 @@ def consultar_api_albion(items_list, locations_list):
     except Exception as e:
         st.error("Error conectando a la API de Albion.")
     return []
+
+# --- FUNCIÓN DE CONEXIÓN PARA EL HISTORIAL DE PRECIOS ---
+@st.cache_data(ttl=3600) # Guardamos el historial 1 hora para no saturar
+def consultar_historial(item_id, ciudad):
+    # time-scale=1 significa que nos dará el promedio por hora
+    url = f"https://www.albion-online-data.com/api/v2/stats/history/{item_id}?locations={ciudad}&time-scale=1"
+    
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            datos_json = resp.json()
+            # Verificamos que la API nos haya devuelto datos válidos
+            if datos_json and len(datos_json) > 0 and 'data' in datos_json[0]:
+                historial = datos_json[0]['data']
+                df = pd.DataFrame(historial)
+                
+                # Convertimos la fecha de la API a un formato legible
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                # Usamos la fecha como el índice principal (eje X del gráfico)
+                df = df.set_index('timestamp')
+                # Renombramos la columna para que se vea bonita en el gráfico
+                df = df.rename(columns={'avg_price': 'Precio Promedio'})
+                
+                return df[['Precio Promedio']]
+    except Exception as e:
+        pass
+    
+    return None
 
 # 1. EL NUEVO CATÁLOGO UNIVERSAL (Puedes agregar lo que quieras aquí)
 catalogo = {
@@ -425,7 +453,7 @@ tiene_premium = st.sidebar.checkbox("¿Tienes Premium Activo?", value=True)
 costo_materiales = st.sidebar.number_input("Costo Total de Materiales (Plata):", min_value=0, value=0, step=100)
 
 # --- PANEL PRINCIPAL ---
-st.title("📈 Analizador de Mercado Universal")
+st.title("🍌 Bananita Market - Chanchito Xupalo 🍆")
 
 if 'mis_datos' not in st.session_state:
     st.session_state.mis_datos = None
@@ -512,7 +540,7 @@ with tab1:
     with c_enc:
         enc_ref = st.selectbox("Encantamiento", [".0", ".1", ".2", ".3", ".4"], key="smart_enc")
 
-    # Mapeo estático por si la API falla completamente
+    # Mapeo estático
     map_ids = {
         "Mineral (Lingotes)": {"raw": "ORE", "ref": "METALBAR", "bono": "Thetford", "compra": "Fort Sterling", "venta": "Bridgewatch"},
         "Madera (Tablas)": {"raw": "WOOD", "ref": "PLANKS", "bono": "Fort Sterling", "compra": "Lymhurst", "venta": "Lymhurst"},
@@ -521,7 +549,30 @@ with tab1:
         "Piedra (Bloques)": {"raw": "ROCK", "ref": "STONEBLOCK", "bono": "Bridgewatch", "compra": "Martlock", "venta": "Caerleon"}
     }
     
-    # 2. Inicializar variables en la "Memoria" de Streamlit para que no se borren
+    # --- CONSTRUCCIÓN INTELIGENTE DE IDs (CORRECCIÓN DEFINITIVA) ---
+    base_raw = map_ids[material]["raw"]
+    base_ref = map_ids[material]["ref"]
+    tier_num = int(tier_ref[1])
+    
+    if enc_ref == ".0":
+        id_crudo = f"{tier_ref}_{base_raw}"
+        id_final = f"{tier_ref}_{base_ref}"
+        id_previo = f"T{tier_num-1}_{base_ref}"
+    else:
+        num_enc = enc_ref.replace(".", "") # "1", "2", "3", "4"
+        
+        # En la API, TANTO crudos como refinados usan _LEVEL y @ para los encantamientos
+        id_crudo = f"{tier_ref}_{base_raw}_LEVEL{num_enc}@{num_enc}"
+        id_final = f"{tier_ref}_{base_ref}_LEVEL{num_enc}@{num_enc}"
+        
+        # Regla de Albion: Refinar T5.1 o superior exige el material anterior también encantado (Ej: T4.1)
+        # La única excepción es refinar T4, que siempre usa T3 plano.
+        if tier_num == 4:
+            id_previo = f"T3_{base_ref}" 
+        else:
+            id_previo = f"T{tier_num-1}_{base_ref}_LEVEL{num_enc}@{num_enc}"
+
+    # 2. Inicializar variables en Memoria
     if "ruta_compra" not in st.session_state: st.session_state.ruta_compra = map_ids[material]["compra"]
     if "ruta_refina" not in st.session_state: st.session_state.ruta_refina = map_ids[material]["bono"]
     if "ruta_venta" not in st.session_state: st.session_state.ruta_venta = map_ids[material]["venta"]
@@ -529,19 +580,10 @@ with tab1:
     if "p_previo" not in st.session_state: st.session_state.p_previo = 0
     if "p_final" not in st.session_state: st.session_state.p_final = 0
 
-    # 3. BOTÓN DE LA API (Solo actualiza la memoria, no calcula)
+    # 3. BOTÓN DE LA API
     if st.button("📡 Buscar Precios Automáticos (API)", use_container_width=True):
         with st.spinner("Escaneando las 6 ciudades..."):
             ciudades_royal = ["Thetford", "Fort Sterling", "Lymhurst", "Bridgewatch", "Martlock", "Caerleon"]
-            base_raw = map_ids[material]["raw"]
-            base_ref = map_ids[material]["ref"]
-            enc_api = enc_ref.replace(".", "@") if enc_ref != ".0" else ""
-            
-            tier_num = int(tier_ref[1])
-            id_crudo = f"{tier_ref}_{base_raw}{enc_api}"
-            id_previo = f"T{tier_num-1}_{base_ref}"
-            id_final = f"{tier_ref}_{base_ref}{enc_api}"
-
             data = consultar_api_albion([id_crudo, id_previo, id_final], ciudades_royal)
 
             if data:
@@ -550,12 +592,10 @@ with tab1:
                 df_ventas = df_api[df_api['buy_price_max'] > 0]
 
                 try:
-                    # Buscar las mejores ciudades dinámicamente
                     best_raw = df_compras[df_compras['item_id'] == id_crudo].sort_values('sell_price_min').iloc[0]
                     best_prev = df_compras[df_compras['item_id'] == id_previo].sort_values('sell_price_min').iloc[0]
                     best_sell = df_ventas[df_ventas['item_id'] == id_final].sort_values('buy_price_max', ascending=False).iloc[0]
 
-                    # Guardar en la memoria
                     st.session_state.ruta_compra = best_raw['city']
                     st.session_state.ruta_venta = best_sell['city']
                     st.session_state.p_crudo = int(best_raw['sell_price_min'])
@@ -568,10 +608,9 @@ with tab1:
             else:
                 st.error("❌ Error de conexión con Albion Data Project. Usa el modo manual.")
 
-    # 4. CAJAS MANUALES (El usuario siempre tiene el control final)
+    # 4. CAJAS MANUALES Y LOGÍSTICA
     st.divider()
     st.markdown(f"### 📍 Ruta de Logística y Precios")
-    st.caption("Puedes editar estos valores libremente si los ves distintos en el juego.")
     
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
@@ -587,12 +626,11 @@ with tab1:
         precio_final = st.number_input(f"Precio de Venta Final", value=st.session_state.p_final, step=10)
         costo_tp = st.number_input("Costo TP (por item)", value=0)
 
-    # 5. CÁLCULO AUTOMÁTICO (Reacciona al instante si cambias un número)
+    # 5. CÁLCULO Y RESULTADOS AUTOMÁTICOS
     if precio_crudo > 0 and precio_final > 0:
         rrr = 36.7 if tiene_premium else 15.2
         ratio = {"T4": 2, "T5": 3, "T6": 4, "T7": 5, "T8": 5}[tier_ref]
         
-        # Matemáticas
         costo_unidad = (precio_crudo * ratio) + precio_previo
         cant_recetas = capital // costo_unidad if costo_unidad > 0 else 0
         
@@ -600,7 +638,6 @@ with tab1:
             inv_total = cant_recetas * costo_unidad
             total_creado = cant_recetas * (1 + (rrr/100))
             
-            # Impuestos de mercado (-4% venta directa, -6.5% orden de venta)
             venta_directa = (total_creado * precio_final) * 0.96 
             venta_orden = (total_creado * precio_final) * 0.935 
             
@@ -608,24 +645,61 @@ with tab1:
             ganancia_orden = venta_orden - inv_total - (cant_recetas * (tasa_tienda/100)) - (cant_recetas * costo_tp)
 
             # Resultados visuales
-            st.markdown("#### 🛒 Tu Lista de Compras:")
-            c1, c2 = st.columns(2)
-            c1.metric(f"Cantidad {tier_ref} Crudo", f"{int(cant_recetas * ratio):,}")
-            c2.metric(f"Cantidad Tier Anterior", f"{int(cant_recetas):,}")
+            st.markdown("#### 📦 Resultados de la Producción:")
+            c1, c2, c3 = st.columns(3)
+            c1.metric(f"Comprar Crudo", f"{int(cant_recetas * ratio):,}")
+            c2.metric(f"Comprar Tier Anterior", f"{int(cant_recetas):,}")
+            extra_por_rrr = total_creado - cant_recetas
+            c3.metric(f"Refinados Finales", f"{int(total_creado):,}", delta=f"+{int(extra_por_rrr):,} por Devolución")
 
             st.divider()
-            st.subheader("💰 Análisis de Ganancia Neta")
-            g1, g2 = st.columns(2)
-            g1.metric("Venta Directa (Rápido)", f"{int(ganancia_directa):,} Plata")
-            g2.metric("Orden de Venta (Paciencia)", f"{int(ganancia_orden):,} Plata")
+            st.subheader("💰 Análisis de Rentabilidad Neta")
             
-            if ganancia_directa < 0 and ganancia_orden < 0:
-                st.error("⚠️ Atención: Con estos precios, vas a PERDER plata. No hagas el viaje.")
-        else:
-            st.error("❌ Tu capital no alcanza para fabricar ni una sola pieza a estos precios.")
-    else:
-        st.info("👆 Haz clic en 'Buscar Precios' o ingresa los números manualmente para ver tu ganancia.")
+            costos_operativos = (cant_recetas * (tasa_tienda/100)) + (cant_recetas * costo_tp)
+            inversion_total_real = inv_total + costos_operativos
+            
+            col_fin1, col_fin2 = st.columns(2)
+            with col_fin1:
+                st.write("**Opción: Orden de Venta (Paciencia)**")
+                porcentaje_orden = (ganancia_orden / inversion_total_real) * 100 if inversion_total_real > 0 else 0
+                st.metric("Ganancia Pura", f"{int(ganancia_orden):,} Plata", delta=f"{porcentaje_orden:.1f}% Retorno")
+            with col_fin2:
+                st.write("**Opción: Venta Directa (Rápido)**")
+                porcentaje_directa = (ganancia_directa / inversion_total_real) * 100 if inversion_total_real > 0 else 0
+                st.metric("Ganancia Pura", f"{int(ganancia_directa):,} Plata", delta=f"{porcentaje_directa:.1f}% Retorno")
 
+            st.write(f"⚠️ **Inversión total:** {int(inversion_total_real):,} Plata")
+
+            if ganancia_directa < 0 and ganancia_orden < 0:
+                st.error("📉 Esta operación NO es rentable con los precios actuales.")
+
+            # --- RADAR DE TENDENCIAS ---
+            st.divider()
+            st.subheader("📊 Radar de Tendencias (Timing del Mercado)")
+            
+            ciudad_compra = st.session_state.ruta_compra
+            ciudad_venta = st.session_state.ruta_venta
+            
+            grafico_ver = st.radio("Analizar historial de:", 
+                                  [f"Crudo en {ciudad_compra}", f"Refinado en {ciudad_venta}"],
+                                  horizontal=True)
+            
+            with st.spinner("Dibujando historial y volumen..."):
+                if "Crudo" in grafico_ver:
+                    df_hist = consultar_historial(id_crudo, ciudad_compra)
+                    color_linea = "#e74c3c"
+                else:
+                    df_hist = consultar_historial(id_final, ciudad_venta)
+                    color_linea = "#2ecc71"
+                    
+                if df_hist is not None and not df_hist.empty:
+                    st.line_chart(df_hist[['Precio Promedio']], color=color_linea, height=200)
+                    if 'Cantidad Vendida (Volumen)' in df_hist.columns:
+                        st.bar_chart(df_hist[['Cantidad Vendida (Volumen)']], color="#f39c12", height=150)
+                else:
+                    st.info("No hay datos históricos suficientes para mostrar el gráfico.")
+        else:
+            st.error("❌ Tu capital no alcanza para fabricar ni una sola pieza.")
 with tab2:
     st.subheader("Ingresos Pasivos: Trabajadores y Alquileres")
     st.write("Destina tu capital a estructurar una economía de casas y trabajadores.")
