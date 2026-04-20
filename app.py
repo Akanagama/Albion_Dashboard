@@ -3,6 +3,19 @@ import requests
 import pandas as pd
 
 st.set_page_config(page_title="Albion Econ", layout="wide")
+# --- FUNCIÓN DE CONEXIÓN A LA API DE ALBION PARA REFINACIÓN ---
+@st.cache_data(ttl=300) # Guarda los datos 5 minutos
+def consultar_api_albion(items_list, locations_list):
+    items_str = ",".join(items_list)
+    locs_str = ",".join(locations_list)
+    url = f"https://www.albion-online-data.com/api/v2/stats/prices/{items_str}?locations={locs_str}"
+    try:
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception as e:
+        st.error("Error conectando a la API de Albion.")
+    return []
 
 # 1. EL NUEVO CATÁLOGO UNIVERSAL (Puedes agregar lo que quieras aquí)
 catalogo = {
@@ -476,3 +489,158 @@ if st.session_state.mis_datos:
         tabla_estilizada = df[columnas_finales].style.map(pintar_ganancia, subset=['Ganancia Neta'])
         
         st.dataframe(tabla_estilizada, use_container_width=True, hide_index=True)
+
+# --- NUEVO MÓDULO: RECOMENDADOR DE INVERSIONES ---
+st.divider()
+st.header("📈 Recomendador de Inversiones")
+st.markdown("Estrategias para multiplicar tu plata usando capital inicial.")
+
+capital = st.number_input("💰 ¿Cuál es tu presupuesto para invertir? (Plata)", min_value=100000, value=1000000, step=100000)
+
+tab1, tab2, tab3 = st.tabs(["🔨 Refinación", "🏝️ Gestión de Islas", "⚖️ Mercado Negro"])
+
+with tab1:
+    st.subheader("🚀 Escáner de Arbitraje Inteligente")
+    st.markdown("Usa la API para buscar la mejor ruta, o ingresa los precios manualmente si el mercado no está actualizado.")
+
+    # 1. Configuración de la búsqueda
+    c_mat, c_tier, c_enc = st.columns(3)
+    with c_mat:
+        material = st.selectbox("Material a analizar", ["Mineral (Lingotes)", "Madera (Tablas)", "Fibra (Tela)", "Piel (Cuero)", "Piedra (Bloques)"])
+    with c_tier:
+        tier_ref = st.selectbox("Tier Crudo", ["T4", "T5", "T6", "T7", "T8"], key="smart_tier")
+    with c_enc:
+        enc_ref = st.selectbox("Encantamiento", [".0", ".1", ".2", ".3", ".4"], key="smart_enc")
+
+    # Mapeo estático por si la API falla completamente
+    map_ids = {
+        "Mineral (Lingotes)": {"raw": "ORE", "ref": "METALBAR", "bono": "Thetford", "compra": "Fort Sterling", "venta": "Bridgewatch"},
+        "Madera (Tablas)": {"raw": "WOOD", "ref": "PLANKS", "bono": "Fort Sterling", "compra": "Lymhurst", "venta": "Lymhurst"},
+        "Fibra (Tela)": {"raw": "FIBER", "ref": "CLOTH", "bono": "Lymhurst", "compra": "Thetford", "venta": "Fort Sterling"},
+        "Piel (Cuero)": {"raw": "HIDE", "ref": "LEATHER", "bono": "Martlock", "compra": "Bridgewatch", "venta": "Thetford"},
+        "Piedra (Bloques)": {"raw": "ROCK", "ref": "STONEBLOCK", "bono": "Bridgewatch", "compra": "Martlock", "venta": "Caerleon"}
+    }
+    
+    # 2. Inicializar variables en la "Memoria" de Streamlit para que no se borren
+    if "ruta_compra" not in st.session_state: st.session_state.ruta_compra = map_ids[material]["compra"]
+    if "ruta_refina" not in st.session_state: st.session_state.ruta_refina = map_ids[material]["bono"]
+    if "ruta_venta" not in st.session_state: st.session_state.ruta_venta = map_ids[material]["venta"]
+    if "p_crudo" not in st.session_state: st.session_state.p_crudo = 0
+    if "p_previo" not in st.session_state: st.session_state.p_previo = 0
+    if "p_final" not in st.session_state: st.session_state.p_final = 0
+
+    # 3. BOTÓN DE LA API (Solo actualiza la memoria, no calcula)
+    if st.button("📡 Buscar Precios Automáticos (API)", use_container_width=True):
+        with st.spinner("Escaneando las 6 ciudades..."):
+            ciudades_royal = ["Thetford", "Fort Sterling", "Lymhurst", "Bridgewatch", "Martlock", "Caerleon"]
+            base_raw = map_ids[material]["raw"]
+            base_ref = map_ids[material]["ref"]
+            enc_api = enc_ref.replace(".", "@") if enc_ref != ".0" else ""
+            
+            tier_num = int(tier_ref[1])
+            id_crudo = f"{tier_ref}_{base_raw}{enc_api}"
+            id_previo = f"T{tier_num-1}_{base_ref}"
+            id_final = f"{tier_ref}_{base_ref}{enc_api}"
+
+            data = consultar_api_albion([id_crudo, id_previo, id_final], ciudades_royal)
+
+            if data:
+                df_api = pd.DataFrame(data)
+                df_compras = df_api[df_api['sell_price_min'] > 0]
+                df_ventas = df_api[df_api['buy_price_max'] > 0]
+
+                try:
+                    # Buscar las mejores ciudades dinámicamente
+                    best_raw = df_compras[df_compras['item_id'] == id_crudo].sort_values('sell_price_min').iloc[0]
+                    best_prev = df_compras[df_compras['item_id'] == id_previo].sort_values('sell_price_min').iloc[0]
+                    best_sell = df_ventas[df_ventas['item_id'] == id_final].sort_values('buy_price_max', ascending=False).iloc[0]
+
+                    # Guardar en la memoria
+                    st.session_state.ruta_compra = best_raw['city']
+                    st.session_state.ruta_venta = best_sell['city']
+                    st.session_state.p_crudo = int(best_raw['sell_price_min'])
+                    st.session_state.p_previo = int(best_prev['sell_price_min'])
+                    st.session_state.p_final = int(best_sell['buy_price_max'])
+                    
+                    st.success("✅ ¡Datos actualizados desde la API!")
+                except IndexError:
+                    st.warning("⚠️ Faltan datos en la API para este ítem. Ingresa los precios manualmente abajo.")
+            else:
+                st.error("❌ Error de conexión con Albion Data Project. Usa el modo manual.")
+
+    # 4. CAJAS MANUALES (El usuario siempre tiene el control final)
+    st.divider()
+    st.markdown(f"### 📍 Ruta de Logística y Precios")
+    st.caption("Puedes editar estos valores libremente si los ves distintos en el juego.")
+    
+    col_p1, col_p2, col_p3 = st.columns(3)
+    with col_p1:
+        st.info(f"**Origen:** {st.session_state.ruta_compra}")
+        precio_crudo = st.number_input(f"Precio Crudo", value=st.session_state.p_crudo, step=10)
+        precio_previo = st.number_input(f"Precio Tier Anterior", value=st.session_state.p_previo, step=10)
+    with col_p2:
+        st.warning(f"**Refinación:** {map_ids[material]['bono']}")
+        tiene_premium = st.checkbox("Uso Foco (36.7% RRR)", value=True)
+        tasa_tienda = st.number_input("Tasa Tienda (Fee)", value=450)
+    with col_p3:
+        st.success(f"**Venta:** {st.session_state.ruta_venta}")
+        precio_final = st.number_input(f"Precio de Venta Final", value=st.session_state.p_final, step=10)
+        costo_tp = st.number_input("Costo TP (por item)", value=0)
+
+    # 5. CÁLCULO AUTOMÁTICO (Reacciona al instante si cambias un número)
+    if precio_crudo > 0 and precio_final > 0:
+        rrr = 36.7 if tiene_premium else 15.2
+        ratio = {"T4": 2, "T5": 3, "T6": 4, "T7": 5, "T8": 5}[tier_ref]
+        
+        # Matemáticas
+        costo_unidad = (precio_crudo * ratio) + precio_previo
+        cant_recetas = capital // costo_unidad if costo_unidad > 0 else 0
+        
+        if cant_recetas > 0:
+            inv_total = cant_recetas * costo_unidad
+            total_creado = cant_recetas * (1 + (rrr/100))
+            
+            # Impuestos de mercado (-4% venta directa, -6.5% orden de venta)
+            venta_directa = (total_creado * precio_final) * 0.96 
+            venta_orden = (total_creado * precio_final) * 0.935 
+            
+            ganancia_directa = venta_directa - inv_total - (cant_recetas * (tasa_tienda/100)) - (cant_recetas * costo_tp)
+            ganancia_orden = venta_orden - inv_total - (cant_recetas * (tasa_tienda/100)) - (cant_recetas * costo_tp)
+
+            # Resultados visuales
+            st.markdown("#### 🛒 Tu Lista de Compras:")
+            c1, c2 = st.columns(2)
+            c1.metric(f"Cantidad {tier_ref} Crudo", f"{int(cant_recetas * ratio):,}")
+            c2.metric(f"Cantidad Tier Anterior", f"{int(cant_recetas):,}")
+
+            st.divider()
+            st.subheader("💰 Análisis de Ganancia Neta")
+            g1, g2 = st.columns(2)
+            g1.metric("Venta Directa (Rápido)", f"{int(ganancia_directa):,} Plata")
+            g2.metric("Orden de Venta (Paciencia)", f"{int(ganancia_orden):,} Plata")
+            
+            if ganancia_directa < 0 and ganancia_orden < 0:
+                st.error("⚠️ Atención: Con estos precios, vas a PERDER plata. No hagas el viaje.")
+        else:
+            st.error("❌ Tu capital no alcanza para fabricar ni una sola pieza a estos precios.")
+    else:
+        st.info("👆 Haz clic en 'Buscar Precios' o ingresa los números manualmente para ver tu ganancia.")
+
+with tab2:
+    st.subheader("Ingresos Pasivos: Trabajadores y Alquileres")
+    st.write("Destina tu capital a estructurar una economía de casas y trabajadores.")
+    st.markdown("""
+    * **Trabajadores (Laborers):** Compra Diarios y entrégalos.
+    * **Alquileres:** Ofrece tu isla a otros jugadores para cultivo.
+    * **Riesgo:** Nulo (tras recuperar inversión).
+    """)
+
+with tab3:
+    st.subheader("Alto Riesgo: Mercado Negro")
+    st.write("Compra equipo barato y llévalo a Caerleon.")
+    st.markdown("""
+    * Compra T4.1 o T5 en ciudades reales.
+    * Transporta por zona roja hacia **Caerleon**.
+    * Vende al NPC del Mercado Negro por sobreprecio.
+    * **Riesgo:** Alto (Gankers).
+    """)
