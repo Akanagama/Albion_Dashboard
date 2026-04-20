@@ -521,15 +521,16 @@ if st.session_state.mis_datos:
 # --- NUEVO MÓDULO: RECOMENDADOR DE INVERSIONES ---
 st.divider()
 st.header("📈 Recomendador de Inversiones")
-st.markdown("Estrategias para multiplicar tu plata usando capital inicial.")
-
-capital = st.number_input("💰 ¿Cuál es tu presupuesto para invertir? (Plata)", min_value=100000, value=1000000, step=100000)
 
 tab1, tab2, tab3 = st.tabs(["🔨 Refinación", "🏝️ Gestión de Islas", "⚖️ Mercado Negro"])
 
 with tab1:
     st.subheader("🚀 Escáner de Arbitraje Inteligente")
     st.markdown("Usa la API para buscar la mejor ruta, o ingresa los precios manualmente si el mercado no está actualizado.")
+
+    # --- PRESUPUESTO EXCLUSIVO DE ESTA PESTAÑA ---
+    capital = st.number_input("💰 Presupuesto de Inversión (Plata)", min_value=0, value=1000000, step=100000, key="capital_tab1")
+    st.divider()
 
     # 1. Configuración de la búsqueda
     c_mat, c_tier, c_enc = st.columns(3)
@@ -610,20 +611,25 @@ with tab1:
 
     # 4. CAJAS MANUALES Y LOGÍSTICA
     st.divider()
-    st.markdown(f"### 📍 Ruta de Logística y Precios")
+    st.markdown("### 📍 Ruta de Logística y Precios")
+    
+    # Lógica de visualización dinámica
+    mostrar_origen = st.session_state.ruta_compra if st.session_state.p_crudo > 0 else "--- (Sin datos)"
+    mostrar_venta = st.session_state.ruta_venta if st.session_state.p_final > 0 else "--- (Sin datos)"
     
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
-        st.info(f"**Origen:** {st.session_state.ruta_compra}")
-        precio_crudo = st.number_input(f"Precio Crudo", value=st.session_state.p_crudo, step=10)
-        precio_previo = st.number_input(f"Precio Tier Anterior", value=st.session_state.p_previo, step=10)
+        st.info(f"**Origen:** {mostrar_origen}")
+        precio_crudo = st.number_input("Precio Crudo", value=st.session_state.p_crudo, step=10)
+        precio_previo = st.number_input("Precio Tier Anterior", value=st.session_state.p_previo, step=10)
     with col_p2:
-        st.warning(f"**Refinación:** {map_ids[material]['bono']}")
+        # La ciudad de refinación siempre se muestra porque el bono es una regla fija del juego
+        st.warning(f"**Refinación (Bono):** {map_ids[material]['bono']}")
         tiene_premium = st.checkbox("Uso Foco (36.7% RRR)", value=True)
         tasa_tienda = st.number_input("Tasa Tienda (Fee)", value=450)
     with col_p3:
-        st.success(f"**Venta:** {st.session_state.ruta_venta}")
-        precio_final = st.number_input(f"Precio de Venta Final", value=st.session_state.p_final, step=10)
+        st.success(f"**Venta:** {mostrar_venta}")
+        precio_final = st.number_input("Precio de Venta Final", value=st.session_state.p_final, step=10)
         costo_tp = st.number_input("Costo TP (por item)", value=0)
 
     # 5. CÁLCULO Y RESULTADOS AUTOMÁTICOS
@@ -700,21 +706,329 @@ with tab1:
                     st.info("No hay datos históricos suficientes para mostrar el gráfico.")
         else:
             st.error("❌ Tu capital no alcanza para fabricar ni una sola pieza.")
+
+
 with tab2:
-    st.subheader("Ingresos Pasivos: Trabajadores y Alquileres")
-    st.write("Destina tu capital a estructurar una economía de casas y trabajadores.")
-    st.markdown("""
-    * **Trabajadores (Laborers):** Compra Diarios y entrégalos.
-    * **Alquileres:** Ofrece tu isla a otros jugadores para cultivo.
-    * **Riesgo:** Nulo (tras recuperar inversión).
-    """)
+    st.subheader("🏝️ Imperio de Islas y Gestión de Trabajadores")
+    st.markdown("Configura tus islas para renta o maximiza el beneficio de tus trabajadores de alto nivel.")
+
+    # --- SECCIÓN 1: GESTOR DE ALQUILERES ---
+    st.markdown("### 🏘️ Administración de Rentas")
+    col_rent1, col_rent2 = st.columns(2)
+    with col_rent1:
+        islas_propias = st.number_input("Total de Islas para renta", min_value=0, value=3)
+        nivel_isla = st.selectbox("Nivel de cada Isla", ["Nivel 4 (2 Parcelas)", "Nivel 5 (3 Parcelas)", "Nivel 6 (5 Parcelas)"], index=2)
+    with col_rent2:
+        precio_parcela = st.number_input("Precio diario por parcela (Plata)", value=35000)
+        tasa_ocupacion = st.slider("Ocupación Real %", 0, 100, 100)
+
+    # Cálculo de renta
+    num_parcelas_map = {"Nivel 4 (2 Parcelas)": 2, "Nivel 5 (3 Parcelas)": 3, "Nivel 6 (5 Parcelas)": 5}
+    renta_mensual = (islas_propias * num_parcelas_map[nivel_isla] * (tasa_ocupacion/100)) * precio_parcela * 30
+    st.metric("Ingreso Mensual por Rentas", f"{int(renta_mensual):,} Plata", help="Basado en 30 días de ocupación.")
+
+    # --- SECCIÓN 2: TRABAJADORES (LABORERS) PROFESIONAL ---
+    st.divider()
+    st.markdown("### 👷 Calculadora de Trabajadores y Diarios")
+    
+    # Lista completa de trabajadores de Albion
+    lista_trabajadores = [
+        "Leñador (Madera)", "Cantero (Piedra)", "Prospector (Mineral)", 
+        "Cosechador (Fibra)", "Montería (Piel)", "Mercenario", 
+        "Herrero (Equipo Metal)", "Flechero (Arcos/Cuero)", 
+        "Imbuido (Varas/Tela)", "Hojalatero (Herramientas/Capas)"
+    ]
+
+    c_t1, c_t2, c_t3 = st.columns(3)
+    with c_t1:
+        tipo_t = st.selectbox("Especialidad del Trabajador", lista_trabajadores)
+        tier_t = st.selectbox("Tier del Trabajador", ["T2", "T3", "T4", "T5", "T6", "T7", "T8"], index=4) # T6 por defecto
+    with c_t2:
+        num_t = st.number_input("Cantidad de Trabajadores", value=15, step=3)
+        retorno_pct = st.number_input("Retorno de Felicidad %", value=150, help="El porcentaje que te marca el trabajador al entregarle el diario (normalmente entre 100% y 150%).")
+    with c_t3:
+        precio_lleno = st.number_input("Precio Diario Lleno", value=25000)
+        precio_vacio = st.number_input("Precio Diario Vacío", value=5000)
+
+    # Input del valor promedio que devuelve
+    valor_loot = st.number_input(f"Valor promedio del Loot devuelto ({tier_t})", value=45000, help="Suma el valor promedio de los recursos que trae el trabajador según su Tier.")
+
+    # Matemáticas de Trabajadores
+    # Costo neto = (Diario Lleno - Diario Vacio) ya que recuperas el frasco
+    costo_diario_neto = (precio_lleno - precio_vacio) * num_t
+    
+    # El retorno afecta directamente a la cantidad de loot
+    ingreso_bruto_t = (valor_loot * (retorno_pct / 100)) * num_t
+    ganancia_neta_t = ingreso_bruto_t - costo_diario_neto
+
+    st.markdown(f"#### 📊 Análisis de Rentabilidad: {tipo_t} {tier_t}")
+    t_col1, t_col2, t_col3 = st.columns(3)
+    
+    t_col1.metric("Costo Neto de Diarios", f"{int(costo_diario_neto):,} Plata")
+    t_col2.metric("Ganancia Diaria Neta", f"{int(ganancia_neta_t):,} Plata")
+    
+    # Proyección a largo plazo (Muy importante para tu estrategia de islas)
+    ganancia_mensual_t = ganancia_neta_t * 30
+    t_col3.metric("Ganancia Mensual Est.", f"{int(ganancia_mensual_t):,} Plata", delta=f"{retorno_pct}% Yield")
+
+    if ganancia_neta_t <= 0:
+        st.error("⚠️ Los diarios están demasiado caros o el loot es muy bajo. Estás perdiendo plata con esta configuración.")
+    else:
+        st.success(f"Configuración rentable. Cada trabajador te deja **{int(ganancia_neta_t / num_t):,}** de plata pura al día.")
+
+    # --- SECCIÓN 2: AGRICULTURA CON BONOS REGIONALES ---
+    st.divider()
+    st.markdown("### 🧑‍🌾 Agricultura Eficiente (Bonos Regionales)")
+    
+    # Definición de bonos por ciudad (Datos oficiales de Albion)
+    bonos_ciudad = {
+        "Martlock": "Papas (T6)",
+        "Bridgewatch": "Maíz (T7)",
+        "Lymhurst": "Zanahorias (T3) / Calabazas (T8)",
+        "Fort Sterling": "Nabos (T4)",
+        "Thetford": "Coles (T5)",
+        "Caerleon": "Ninguno (Bono en comida/pociones)"
+    }
+
+    c_city, c_cult = st.columns(2)
+    with c_city:
+        ciudad_isla = st.selectbox("Ciudad de la Isla", ["Martlock", "Bridgewatch", "Lymhurst", "Fort Sterling", "Thetford", "Caerleon"])
+    with c_cult:
+        cultivo = st.selectbox("Cultivo a sembrar", ["Zanahorias (T3)", "Nabos (T4)", "Coles (T5)", "Papas (T6)", "Maíz (T7)", "Calabazas (T8)"])
+
+    # Verificar si hay bono
+    tiene_bono_ciudad = False
+    if cultivo.split(" (")[0] in bonos_ciudad[ciudad_isla]:
+        tiene_bono_ciudad = True
+        st.success(f"✨ **Bono detectado:** {ciudad_isla} tiene bono para {cultivo}. Rendimiento aumentado en +10%.")
+    else:
+        st.info(f"💡 Tip: {cultivo} tiene bono en **{ [k for k, v in bonos_ciudad.items() if cultivo.split(' (')[0] in v][0] if any(cultivo.split(' (')[0] in v for v in bonos_ciudad.values()) else 'ninguna ciudad' }**.")
+
+    # Cálculos de Granja
+    col_g1, col_g2 = st.columns(2)
+    with col_g1:
+        n_parcelas = st.number_input("Cantidad de Parcelas", value=5)
+        costo_s = st.number_input("Costo Semilla", value=2500)
+    with col_g2:
+        venta_c = st.number_input("Precio Venta Cultivo", value=400)
+        retorno_s = st.slider("Retorno Semillas %", 0, 150, 91)
+
+    # El bono de ciudad suele dar un ~10% más de producto final
+    multiplicador_bono = 1.10 if tiene_bono_ciudad else 1.0
+    total_items = (n_parcelas * 9 * 9) * multiplicador_bono # 9 espacios * ~9 items por espacio
+    
+    inversion = (n_parcelas * 9) * costo_s
+    recuperacion_s = (n_parcelas * 9 * (retorno_s/100)) * costo_s
+    venta_total = (total_items * venta_c) * 0.935 # -6.5% impuesto
+    ganancia_granja = venta_total - (inversion - recuperacion_s)
+
+    st.metric("Ganancia Diaria Estimada", f"{int(ganancia_granja):,} Plata", delta=f"{'+10% Bono' if tiene_bono_ciudad else 'Sin bono'}")
+
+    # --- SECCIÓN 3: GANADERÍA CON BONOS DE CIUDAD ---
+    st.divider()
+    st.markdown("### 🐄 Ganadería y Crianza con Bonos de Ciudad")
+    
+    # Mapeo oficial de bonos ganaderos por ciudad
+    bonos_ganaderia = {
+        "Lymhurst": ["Pollo", "Gallinas (Huevos)"],
+        "Bridgewatch": ["Cabrito", "Cabras (Leche)"],
+        "Fort Sterling": ["Oveja", "Ovejas (Lana)"],
+        "Thetford": ["Cerdito", "Cerdos (Carne)"],
+        "Martlock": ["Ternero", "Vacas (Leche)"],
+        "Caerleon": ["Ninguno"]
+    }
+
+    col_g_city, col_g_mode = st.columns(2)
+    with col_g_city:
+        ciudad_ganado = st.selectbox("Ciudad de la Granja", ["Lymhurst", "Bridgewatch", "Fort Sterling", "Thetford", "Martlock", "Caerleon"])
+    with col_g_mode:
+        modo_ganado = st.radio("Estrategia:", ["Producción de Recursos", "Crianza Final (Venta)"], horizontal=True)
+
+    # Identificar bono
+    if modo_ganado == "Producción de Recursos":
+        animal_prod = st.selectbox("Animal Productor", ["Gallinas (Huevos)", "Cabras (Leche)", "Ovejas (Lana)", "Cerdos (Carne)", "Vacas (Leche)"])
+        tiene_bono_g = any(animal_prod in b for b in bonos_ganaderia[ciudad_ganado])
+        
+        if tiene_bono_g:
+            st.success(f"✨ **Bono detectado:** {ciudad_ganado} tiene un bono del +10% para {animal_prod}.")
+        else:
+            ciudad_correcta = [k for k, v in bonos_ganaderia.items() if any(animal_prod in s for s in v)][0]
+            st.warning(f"💡 Tip: Para {animal_prod}, obtendrías un 10% más de recursos si estuvieras en **{ciudad_correcta}**.")
+
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            cant_a = st.number_input("Cantidad de animales", value=9)
+            unidades_base = st.number_input("Unidades/día por animal", value=10)
+        with col_p2:
+            precio_r = st.number_input("Precio venta recurso", value=450)
+            costo_c = st.number_input("Costo comida/día/animal", value=2200)
+        with col_p3:
+            usa_foco_p = st.checkbox("Usar Foco", value=True)
+        
+        # Matemáticas con bono (10% extra de producto)
+        mult_bono = 1.10 if tiene_bono_g else 1.0
+        total_prod = (cant_a * unidades_base) * mult_bono
+        ingreso_d = (total_prod * precio_r) * 0.935 # -6.5% impuesto
+        costo_d = cant_a * costo_c
+        ganancia_d = ingreso_d - costo_d
+
+        st.metric("Ganancia Neta Diaria", f"{int(ganancia_d):,} Plata", delta=f"{int(ganancia_d * 30):,} mensual")
+
+    else:
+        # Crianza Final (Monturas/Carne)
+        animal_cria = st.selectbox("Animal a criar", ["Pollo", "Cabrito", "Cerdito", "Ternero", "Potro (Caballo)", "Buey joven"])
+        tiene_bono_c = any(animal_cria in b for b in bonos_ganaderia[ciudad_ganado])
+        
+        if tiene_bono_c:
+            st.success(f"✨ **Bono detectado:** {ciudad_ganado} acelera el crecimiento de {animal_cria} (+10%).")
+        
+        col_c1, col_c2, col_c3 = st.columns(3)
+        with col_c1:
+            dias_c = st.number_input("Días de crecimiento", value=1, min_value=1)
+            costo_b = st.number_input("Costo Cría/Bebé", value=12000)
+        with col_c2:
+            precio_a = st.number_input("Precio Adulto", value=28000)
+            costo_com = st.number_input("Comida total diaria", value=2500)
+        with col_c3:
+            usa_foco_c = st.checkbox("Cuidar con Foco", value=True)
+            prob_b = st.slider("Prob. nueva cría %", 0, 150, 95 if usa_foco_c else 45)
+
+        # Matemáticas de crianza
+        costo_total_comida = costo_com * dias_c
+        # El bono de ciudad en crianza suele reducir el tiempo o aumentar la probabilidad base
+        valor_retorno_bebe = costo_b * (prob_b / 100)
+        ganancia_animal = (precio_a * 0.935 + valor_retorno_bebe) - (costo_b + costo_total_comida)
+        
+        st.metric("Ganancia por Animal", f"{int(ganancia_animal):,} Plata", delta=f"{int(ganancia_animal * 9):,} por parcela")
+
 
 with tab3:
-    st.subheader("Alto Riesgo: Mercado Negro")
-    st.write("Compra equipo barato y llévalo a Caerleon.")
-    st.markdown("""
-    * Compra T4.1 o T5 en ciudades reales.
-    * Transporta por zona roja hacia **Caerleon**.
-    * Vende al NPC del Mercado Negro por sobreprecio.
-    * **Riesgo:** Alto (Gankers).
-    """)
+    st.subheader("⚖️ Radar Masivo con Filtro de Liquidez")
+    st.markdown("Busca las mejores oportunidades filtrando por **Volumen Diario** para asegurar que tus ítems se vendan rápido.")
+
+    import time 
+
+    # 1. Filtros de Búsqueda
+    col_bm1, col_bm2, col_bm3, col_bm4 = st.columns(4)
+    with col_bm1:
+        tier_bm = st.selectbox("Tier Objetivo", ["T4", "T5", "T6", "T7", "T8"], index=3, key="liq_tier")
+    with col_bm2:
+        enc_bm = st.selectbox("Encantamiento", [".0", ".1", ".2", ".3", ".4"], index=1, key="liq_enc")
+    with col_bm3:
+        calidad_bm = st.selectbox("Calidad", ["Normal (1)", "Bueno (2)", "Notable (3)", "Sobresaliente (4)", "Obra Maestra (5)"], key="liq_cal")
+    with col_bm4:
+        vol_min = st.number_input("Ventas diarias mínimas", value=5, step=1, help="Ignora ítems que se vendan menos de X veces al día.")
+
+    capital_bm = st.number_input("Presupuesto Total (Plata)", value=5000000, step=500000, key="liq_cap")
+    premium_bm = st.checkbox("Tengo Premium", value=True, key="liq_prem")
+
+    if st.button("🏴‍☠️ Escanear con Filtro de Volumen", type="primary", use_container_width=True):
+        calidad_num = int(calidad_bm.split("(")[1].replace(")", ""))
+        
+        # Mapeo de nombres e IDs
+        nombres_map = {}
+        for categoria, items in catalogo.items():
+            if "Recursos" not in categoria: 
+                for nombre_item, codigo_base in items.items():
+                    enc_api = enc_bm.replace(".", "@") if enc_bm != ".0" else ""
+                    id_completo = f"{tier_bm}_{codigo_base}{enc_api}"
+                    nombres_map[id_completo] = f"{nombre_item} {tier_bm}{enc_bm}"
+
+        ids_totales = list(nombres_map.keys())
+        
+        def dividir_en_lotes(lista, tamano=40):
+            return [lista[i:i + tamano] for i in range(0, len(lista), tamano)]
+
+        lotes = dividir_en_lotes(ids_totales)
+        ciudades_todas = ["Thetford", "Fort Sterling", "Lymhurst", "Bridgewatch", "Martlock", "Caerleon", "Black Market"]
+        
+        resultados_radar = []
+        impuesto_directa = 0.04 if premium_bm else 0.08
+        impuesto_orden = 0.065 if premium_bm else 0.105
+
+        barra_prog = st.progress(0)
+        texto_estado = st.empty()
+        
+        # --- PASO 1: Descarga de Precios ---
+        datos_completos = []
+        for i, lote in enumerate(lotes):
+            texto_estado.text(f"Escaneando precios... (Lote {i+1} de {len(lotes)})")
+            data_lote = consultar_api_albion(lote, ciudades_todas)
+            if data_lote: datos_completos.extend(data_lote)
+            barra_prog.progress((i + 1) / (len(lotes) + 1)) # Guardamos espacio para el paso de volumen
+            time.sleep(0.3) 
+
+        if datos_completos:
+            df_bm = pd.DataFrame(datos_completos)
+            rentables_preliminares = []
+
+            # Filtrado inicial por rentabilidad
+            for item_id in ids_totales:
+                df_item = df_bm[(df_bm['item_id'] == item_id) & (df_bm['quality'] == calidad_num)]
+                if not df_item.empty:
+                    df_origen = df_item[(df_item['city'] != 'Black Market') & (df_item['sell_price_min'] > 0)]
+                    df_black = df_item[(df_item['city'] == 'Black Market')]
+
+                    if not df_origen.empty and not df_black.empty:
+                        mejor_compra = df_origen.sort_values('sell_price_min').iloc[0]
+                        precio_compra = mejor_compra['sell_price_min']
+                        pago_directo = df_black['buy_price_max'].max()
+
+                        if pago_directo > 0:
+                            ingreso_n = pago_directo * (1 - impuesto_directa)
+                            ganancia_u = ingreso_n - precio_compra
+                            if ganancia_u > 0:
+                                rentables_preliminares.append({
+                                    'id': item_id, 'compra': precio_compra, 'venta': pago_directo, 
+                                    'city': mejor_compra['city'], 'ganancia': ganancia_u
+                                })
+
+            #--- PASO 2: Verificación de Volumen (Solo para los rentables) ---
+            texto_estado.text("Verificando liquidez en el Mercado Negro...")
+            final_oportunidades = []
+            
+            # Para no saturar, solo revisamos el volumen de los 15 más rentables
+            rentables_preliminares = sorted(rentables_preliminares, key=lambda x: x['ganancia'], reverse=True)[:15]
+
+            for op in rentables_preliminares:
+                hist = consultar_historial(op['id'], "Black Market")
+                if hist is not None and not hist.empty:
+                    # 🛡️ ESCUDO ANTI-ERRORES: Verificamos que la columna realmente exista
+                    if 'Cantidad Vendida (Volumen)' in hist.columns:
+                        volumen_diario = hist['Cantidad Vendida (Volumen)'].tail(24).sum()
+                    else:
+                        volumen_diario = 0 # Si la API falla o no hay volumen, asumimos 0
+                    
+                    if volumen_diario >= vol_min:
+                        cant_a_comprar = int(capital_bm // op['compra'])
+                        # Ajustamos la cantidad sugerida para no saturar el mercado
+                        cant_recomendada = min(cant_a_comprar, int(volumen_diario * 0.5)) 
+                        
+                        if cant_recomendada > 0:
+                            ganancia_t = op['ganancia'] * cant_recomendada
+                            final_oportunidades.append({
+                                "Ítem": nombres_map[op['id']],
+                                "Ventas/Día": int(volumen_diario),
+                                "Tus Unidades": cant_recomendada,
+                                "Compra en": op['city'],
+                                "Precio Compra": op['compra'],
+                                "Ganancia Total": ganancia_t,
+                                "Retorno": (ganancia_t / (op['compra'] * cant_recomendada)) * 100
+                            })
+                time.sleep(0.2)
+            barra_prog.progress(1.0)
+            texto_estado.empty()
+
+            if final_oportunidades:
+                st.success(f"### 🏆 Oportunidades con Alta Liquidez (Mín. {vol_min} ventas/día)")
+                df_res = pd.DataFrame(final_oportunidades).sort_values(by="Ganancia Total", ascending=False)
+                
+                # Formateo visual
+                df_res['Precio Compra'] = df_res['Precio Compra'].apply(lambda x: f"{int(x):,}")
+                df_res['Ganancia Total'] = df_res['Ganancia Total'].apply(lambda x: f"{int(x):,}")
+                df_res['Retorno'] = df_res['Retorno'].apply(lambda x: f"{x:.1f}%")
+                
+                st.dataframe(df_res, use_container_width=True, hide_index=True)
+                st.caption("💡 'Tus Unidades' está limitado al 50% del volumen diario para asegurar venta rápida.")
+            else:
+                st.warning("No hay ítems rentables que cumplan con el volumen mínimo de ventas.")
